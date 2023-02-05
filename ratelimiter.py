@@ -6,7 +6,7 @@ from redis import Redis
 
 class AbstractRatelimiter(ABC):
     @abstractmethod
-    def is_ratelimit_exceeded(self):
+    def is_ratelimit_exceeded(self) -> bool:
         pass
 
     @abstractmethod
@@ -16,7 +16,7 @@ class AbstractRatelimiter(ABC):
 
 class AbstractWindow(ABC):
     @abstractmethod
-    def get_current_request_count(self):
+    def get_current_request_count(self) -> int:
         pass
 
     @abstractmethod
@@ -28,15 +28,22 @@ class SimpleSlidingWindow(AbstractWindow):
 
     def __init__(self, precision: int = 1, window_size: int = 60):
         """
-        Create a new sliding window
+        Create a new simple in memory sliding window
         Args:
-            precision: Increase this value to optimize the storage
+            precision: Smaller this value, there will be more entries.
+                (Higher value will result in increased performance)
+            window_size: Size of the window in seconds.
         """
         self.window = {}
         self.precision = precision
         self.window_size = window_size
 
-    def get_current_request_count(self):
+    def get_current_request_count(self) -> int:
+        """Get the total number of requests in current window.
+
+        Returns:
+             total number of requests in current window
+        """
         window_start_ts = (time.time() - self.window_size) // self.precision
         self.cleanup()
         keys_to_sum = [*filter(
@@ -47,10 +54,13 @@ class SimpleSlidingWindow(AbstractWindow):
         return sum([self.window[key] for key in keys_to_sum])
 
     def incr_request_count(self):
+        """Increase the request count by 1"""
         timestamp = int(time.time() / self.precision)
         self.window[timestamp] = self.window.get(timestamp, 0) + 1
 
     def cleanup(self):
+        """Cleans up values outside current window"""
+
         window_start_ts = (time.time() - self.window_size) // self.precision
         keys_to_delete = [*filter(
             lambda x: x < window_start_ts,
@@ -67,6 +77,15 @@ class RedisSlidingWindow(AbstractWindow):
             precision: int = 1,
             window_size: int = 60
     ):
+        """
+        Create a Sliding Window with Redis for storage.
+
+        Args:
+            redis_connection: Redis connection object
+            precision: Smaller this value, there will be more entries. (Higher
+                value will result in increased performance)
+            window_size: Size of the window in seconds.
+        """
         self.window_size = window_size
         self.precision = precision
         self.redis_connection = redis_connection
@@ -74,11 +93,17 @@ class RedisSlidingWindow(AbstractWindow):
         self.lock = redis_connection.lock("redis_key_for_sliding_window_lock")
 
     def incr_request_count(self):
+        """Increase the request count by 1"""
         with self.lock:
             timestamp = int(time.time() / self.precision)
             self.redis_connection.hincrby(self.window_key, str(timestamp), 1)
 
-    def get_current_request_count(self):
+    def get_current_request_count(self) -> int:
+        """Get the total number of requests in current window.
+
+        Returns:
+             total number of requests in current window
+        """
         with self.lock:
             self.cleanup()
             window_start_ts = (
@@ -91,9 +116,10 @@ class RedisSlidingWindow(AbstractWindow):
             return sum([int(window[key]) for key in keys_to_sum])
 
     def cleanup(self):
+        """Cleans up values outside current window"""
         window_start_ts = (
-                                      time.time() - self.window_size
-                                  ) // self.precision
+                            time.time() - self.window_size
+                        ) // self.precision
         window = self.redis_connection.hgetall(self.window_key)
         keys_to_delete = [*filter(
             lambda x: int(x) < window_start_ts,
@@ -109,8 +135,16 @@ class SimpleRatelimiter(AbstractRatelimiter):
         self.window = window
         self.capacity = capacity
 
-    def is_ratelimit_exceeded(self):
+    def is_ratelimit_exceeded(self) -> bool:
+        """
+        Checks if the ratelimit exceeded in current window
+
+        Returns:
+            True if ratelimit exceeded, else False
+
+        """
         return self.window.get_current_request_count() >= self.capacity
 
     def incr_request_count(self):
+        """Increments the request count in current window by 1"""
         self.window.incr_request_count()

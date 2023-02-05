@@ -11,6 +11,7 @@ redis = Redis(
     config.redis_db,
     decode_responses=True
 )
+
 window = RedisSlidingWindow(
     redis_connection=redis,
     precision=config.precision,
