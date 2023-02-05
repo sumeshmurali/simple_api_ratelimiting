@@ -1,4 +1,5 @@
-# simple_api_ratelimiting
+# Flask API with Sliding Window Ratelimiting
+
 A simple api written in Flask with Sliding Window Ratelimiting using Redis
 
 # Requirements
